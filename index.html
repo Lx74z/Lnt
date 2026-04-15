@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Messenger</title>
+  <style>
+    body { font-family: Arial; margin: 20px; }
+    input { padding: 5px; margin: 5px 0; width: 200px; }
+    button { padding: 5px 10px; margin: 5px 5px 5px 0; }
+    #chat { border: 1px solid #ccc; padding: 10px; margin: 10px 0; background: #fafafa; height: 300px; overflow-y: auto; }
+    .msg { margin: 5px 0; padding: 8px; border-radius: 5px; }
+    .mine { background: #e3f2fd; text-align: right; }
+    .other { background: #f5f5f5; }
+    #debug { background: #fff3cd; padding: 10px; margin: 10px 0; border-radius: 3px; font-size: 12px; color: #333; max-height: 100px; overflow-y: auto; }
+  </style>
+</head>
+<body>
+
+<div id="auth">
+  <h2>Вход в Мессенджер</h2>
+  <input id="username" placeholder="Ник"><br>
+  <input id="password" type="password" placeholder="Пароль"><br>
+  <button onclick="register()">Регистрация</button>
+  <button onclick="login()">Вход</button>
+  <p id="error" style="color: red;"></p>
+</div>
+
+<div id="app" style="display:none;">
+  <h2>Мессенджер</h2>
+  <p>Юзер: <strong id="currentUser"></strong></p>
+  <button onclick="logout()">Выйти</button><br><br>
+
+  <input id="searchUser" placeholder="Ник пользователя">
+  <button onclick="findUser()">Найти</button>
+
+  <p id="chatWith" style="color: green; font-weight: bold;"></p>
+
+  <div id="chat"></div><br>
+
+  <input id="message" placeholder="Сообщение">
+  <button onclick="sendMessage()">Отправить</button>
+
+  <div id="debug" style="display:none;">
+    <strong>DEBUG:</strong><br>
+    <div id="debugLog"></div>
+  </div>
+  <button onclick="toggleDebug()" style="font-size: 10px;">Show Debug</button>
+</div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+
+import {
+  getAuth, createUserWithEmailAndPassword,
+  signInWithEmailAndPassword, onAuthStateChanged, signOut
+} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+
+import {
+  getFirestore, collection, addDoc, getDocs,
+  query, where, onSnapshot, orderBy,
+  doc, setDoc, getDoc
+} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyB6KBkuEhMfvEuV4UEo91StjSNpK_qH2FM",
+  authDomain: "shoxrux74r.firebaseapp.com",
+  projectId: "shoxrux74r",
+  storageBucket: "shoxrux74r.firebasestorage.app",
+  messagingSenderId: "400235197619",
+  appId: "1:400235197619:web:95508f9d67dd35f6446cc6"
+};
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+
+let currentUser = null;
+let currentChatUser = null;
+let unsubscribe = null;
+
+function log(msg) {
+  console.log(msg);
+  const debugLog = document.getElementById("debugLog");
+  debugLog.innerHTML += msg + "<br>";
+  debugLog.parentElement.scrollTop = debugLog.parentElement.scrollHeight;
+}
+
+window.toggleDebug = function() {
+  const debug = document.getElementById("debug");
+  debug.style.display = debug.style.display === "none" ? "block" : "none";
+}
+
+function showError(msg) {
+  document.getElementById("error").textContent = msg;
+  setTimeout(() => { document.getElementById("error").textContent = ""; }, 3000);
+}
+
+function makeEmail(username) {
+  return username + "@messenger.app";
+}
+
+onAuthStateChanged(auth, async (user) => {
+  if (user) {
+    currentUser = user;
+    log("✓ Вошел как: " + user.email);
+    document.getElementById("auth").style.display = "none";
+    document.getElementById("app").style.display = "block";
+    document.getElementById("currentUser").textContent = user.email.split("@")[0];
+  } else {
+    currentUser = null;
+    document.getElementById("auth").style.display = "block";
+    document.getElementById("app").style.display = "none";
+    document.getElementById("chatWith").innerText = "";
+    document.getElementById("chat").innerHTML = "";
+  }
+});
+
+window.register = async function() {
+  let username = document.getElementById("username").value.trim().toLowerCase();
+  const password = document.getElementById("password").value;
+
+  if (!username) return showError("Введи ник");
+  if (password.length < 6) return showError("Пароль минимум 6 символов");
+
+  const email = makeEmail(username);
+
+  try {
+    const userCred = await createUserWithEmailAndPassword(auth, email, password);
+    log("Регистрация: uid=" + userCred.user.uid);
+
+    await setDoc(doc(db, "users", username), {
+      uid: userCred.user.uid,
+      username: username,
+      email: email
+    });
+
+    log("✓ Сохранен в Firestore: " + username);
+    showError("✓ Регистрация успешна!");
+    document.getElementById("username").value = "";
+    document.getElementById("password").value = "";
+  } catch (e) {
+    log("✗ Ошибка регистрации: " + e.message);
+    showError("Ошибка: " + e.message);
+  }
+}
+
+window.login = async function() {
+  let username = document.getElementById("username").value.trim().toLowerCase();
+  const password = document.getElementById("password").value;
+
+  if (!username || !password) return showError("Заполни все поля");
+
+  const email = makeEmail(username);
+
+  try {
+    const userCred = await signInWithEmailAndPassword(auth, email, password);
+    log("✓ Вход: uid=" + userCred.user.uid);
+    showError("✓ Вход успешен!");
+    document.getElementById("username").value = "";
+    document.getElementById("password").value = "";
+  } catch (e) {
+    log("✗ Ошибка входа: " + e.message);
+    showError("Ошибка входа");
+  }
+}
+
+window.logout = function() {
+  if (unsubscribe) unsubscribe();
+  signOut(auth);
+  currentChatUser = null;
+  document.getElementById("chatWith").innerText = "";
+  document.getElementById("chat").innerHTML = "";
+}
+
+window.findUser = async function() {
+  let name = document.getElementById("searchUser").value.trim().toLowerCase();
+
+  if (!name) return showError("Введи ник");
+
+  try {
+    log("Поиск пользователя: " + name);
+    const docRef = doc(db, "users", name);
+    const docSnap = await getDoc(docRef);
+
+    if (!docSnap.exists()) {
+      log("✗ Пользователь не найден");
+      showError("Пользователь не найден");
+      return;
+    }
+
+    currentChatUser = docSnap.data();
+    log("✓ Найден: " + currentChatUser.username + " (uid=" + currentChatUser.uid + ")");
+    log("Мой uid: " + currentUser.uid);
+    
+    document.getElementById("chatWith").innerText = "💬 Чат с: " + currentChatUser.username;
+    document.getElementById("searchUser").value = "";
+    loadMessages();
+  } catch (e) {
+    log("✗ Ошибка поиска: " + e.message);
+    showError("Ошибка: " + e.message);
+  }
+}
+
+function getChatId(uid1, uid2) {
+  return uid1 < uid2 ? uid1 + "_" + uid2 : uid2 + "_" + uid1;
+}
+
+window.sendMessage = async function() {
+  if (!currentUser) return showError("Залогинься");
+  if (!currentChatUser) return showError("Выбери пользователя");
+
+  const text = document.getElementById("message").value.trim();
+  if (!text) return;
+
+  const chatId = getChatId(currentUser.uid, currentChatUser.uid);
+
+  log("Отправляю сообщение...");
+  log("chatId: " + chatId);
+  log("from: " + currentUser.uid);
+  log("to: " + currentChatUser.uid);
+
+  try {
+    const result = await addDoc(collection(db, "messages"), {
+      chatId: chatId,
+      from: currentUser.uid,
+      fromName: currentUser.email.split("@")[0],
+      to: currentChatUser.uid,
+      toName: currentChatUser.username,
+      text: text,
+      timestamp: new Date()
+    });
+
+    log("✓ Сообщение отправлено: " + result.id);
+    document.getElementById("message").value = "";
+  } catch (e) {
+    log("✗ Ошибка отправки: " + e.message);
+    showError("Ошибка отправки: " + e.message);
+  }
+}
+
+function loadMessages() {
+  const chatDiv = document.getElementById("chat");
+
+  if (unsubscribe) unsubscribe();
+
+  const chatId = getChatId(currentUser.uid, currentChatUser.uid);
+
+  log("Загружаю сообщения...");
+  log("chatId: " + chatId);
+
+  const q = query(
+    collection(db, "messages"),
+    where("chatId", "==", chatId),
+    orderBy("timestamp", "asc")
+  );
+
+  unsubscribe = onSnapshot(q, (snapshot) => {
+    log("Получено " + snapshot.size + " сообщений");
+
+    chatDiv.innerHTML = "";
+
+    if (snapshot.empty) {
+      log("Сообщений нет");
+      chatDiv.innerHTML = "<p style='color: #999;'>Нет сообщений. Начни беседу!</p>";
+    }
+
+    snapshot.forEach(docSnapshot => {
+      const m = docSnapshot.data();
+      log("Сообщение: " + m.fromName + " -> " + m.text);
+
+      const div = document.createElement("div");
+      div.className = "msg " + (m.from === currentUser.uid ? "mine" : "other");
+
+      const sender = m.from === currentUser.uid ? "Ты" : m.fromName;
+      div.innerHTML = `<strong>${sender}</strong><br>${m.text}`;
+
+      chatDiv.appendChild(div);
+    });
+
+    chatDiv.scrollTop = chatDiv.scrollHeight;
+  }, (error) => {
+    log("✗ Ошибка загрузки: " + error.message);
+    showError("Ошибка загрузки сообщений");
+  });
+}
+</script>
+
+</body>
+</html>
